@@ -1,0 +1,116 @@
+name: Build jars vanilla minimal
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 33
+            branch: lineage-20.0
+          - api: 34
+            branch: lineage-21.0
+          - api: 35
+            branch: lineage-22.2
+          - api: 36
+            branch: lineage-23.2
+
+    env:
+      WORKDIR: ${{ github.workspace }}/android
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+      MANIFEST_REPO: https://github.com/Meriemi-git/sucre-minimal-manifests.git
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git git-lfs repo \
+            openjdk-17-jdk \
+            bc bison build-essential \
+            curl flex g++ gawk gcc-multilib \
+            libncurses-dev \
+            libssl-dev libxml2-utils \
+            lzop rsync zip unzip \
+            schedtool ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-min-${{ matrix.api }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-min-${{ matrix.api }}-
+
+      - name: Prepare ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache -M 10G || true
+
+      - name: repo init from minimal manifest repo
+        run: |
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
+
+          repo init \
+            -u "$MANIFEST_REPO" \
+            -b "${{ matrix.branch }}" \
+            --git-lfs
+
+      - name: repo sync
+        run: |
+          cd "$WORKDIR"
+
+          repo sync \
+            -c \
+            --no-tags \
+            --no-clone-bundle \
+            -j2
+
+      - name: Snapshot source
+        run: |
+          cd "$WORKDIR"
+
+          repo manifest -r -o pinned-manifest.xml
+          repo forall -c 'echo "$REPO_PROJECT $(git rev-parse HEAD)"' | sort > base-revisions.txt
+
+      - name: Copy scripts
+        run: |
+          rsync -a scripts/ "$WORKDIR/scripts/"
+
+      - name: Build jars
+        run: |
+          cd "$WORKDIR"
+
+          export USE_CCACHE=1
+          export CCACHE_DIR="$CCACHE_DIR"
+
+          bash scripts/build-jars.sh "${{ matrix.api }}" vanilla-minimal
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars-api${{ matrix.api }}-vanilla-minimal
+          path: |
+            android/artifacts/api${{ matrix.api }}/vanilla-minimal/*
+            android/base-revisions.txt
+            android/pinned-manifest.xml
