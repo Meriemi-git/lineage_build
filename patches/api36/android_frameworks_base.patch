@@ -1,0 +1,99 @@
+From 7e174e0306c0954ec2a968665e6778abe87f6a13 Mon Sep 17 00:00:00 2001
+From: Doremus <meriemi@protonmail.com>
+Date: Thu, 26 Feb 2026 09:47:50 +0100
+Subject: [PATCH] sucre-snort additions
+
+Change-Id: I40b844516617dfdf1297293a5cf958d05abb6a3f
+---
+ core/java/android/app/Activity.java           |  6 ++++
+ core/java/android/app/IActivityManager.aidl   |  2 ++
+ .../server/am/ActivityManagerService.java     | 33 +++++++++++++++++++
+ 3 files changed, 41 insertions(+)
+
+diff --git a/core/java/android/app/Activity.java b/core/java/android/app/Activity.java
+index e0f0598deca6..aede824123a3 100644
+--- a/core/java/android/app/Activity.java
++++ b/core/java/android/app/Activity.java
+@@ -2348,6 +2348,12 @@ public class Activity extends ContextThemeWrapper
+     }
+ 
+     final void performTopResumedActivityChanged(boolean isTopResumedActivity, String reason) {
++        if (isTopResumedActivity && !getPackageName().isEmpty()) {
++            try {
++                ActivityManager.getService().sucreSnortSendTopActivity(myUid());
++            } catch (RemoteException re) {
++            }
++        }
+         onTopResumedActivityChanged(isTopResumedActivity);
+ 
+         if (isTopResumedActivity) {
+diff --git a/core/java/android/app/IActivityManager.aidl b/core/java/android/app/IActivityManager.aidl
+index 739257d41316..33adefec68a9 100644
+--- a/core/java/android/app/IActivityManager.aidl
++++ b/core/java/android/app/IActivityManager.aidl
+@@ -1054,4 +1054,6 @@ interface IActivityManager {
+      */
+     oneway void reportOptimizationInfo(in IBinder app, in String compilerFilter,
+             in String compilationReason);
++
++    void sucreSnortSendTopActivity(in int uid);
+ }
+diff --git a/services/core/java/com/android/server/am/ActivityManagerService.java b/services/core/java/com/android/server/am/ActivityManagerService.java
+index fddcefda8d3d..e133e6595d5e 100644
+--- a/services/core/java/com/android/server/am/ActivityManagerService.java
++++ b/services/core/java/com/android/server/am/ActivityManagerService.java
+@@ -324,6 +324,11 @@ import android.database.ContentObserver;
+ import android.graphics.Rect;
+ import android.hardware.display.DisplayManager;
+ import android.hardware.display.DisplayManagerInternal;
++import android.media.audiofx.AudioEffect;
++import android.net.ConnectivityManager;
++import android.net.LocalSocket;
++import android.net.LocalSocketAddress;
++import android.net.Proxy;
+ import android.net.Uri;
+ import android.os.AppZygote;
+ import android.os.BatteryStats;
+@@ -510,6 +515,7 @@ import java.io.FileNotFoundException;
+ import java.io.FileOutputStream;
+ import java.io.IOException;
+ import java.io.InputStreamReader;
++import java.io.OutputStream;
+ import java.io.PrintWriter;
+ import java.lang.ref.WeakReference;
+ import java.time.Instant;
+@@ -19918,4 +19924,31 @@ public class ActivityManagerService extends IActivityManager.Stub
+         }
+         r.getWindowProcessController().setOptimizationInfo(compilerFilter, compilationReason);
+     }
++
++    private final LocalSocketAddress mSucreSnortAddress = new LocalSocketAddress(
++        "sucre-snort-control", LocalSocketAddress.Namespace.RESERVED);    
++
++    private void sucreSnortSendCommand(String command) {
++        final LocalSocket socket = new LocalSocket(LocalSocket.SOCKET_STREAM);
++        try {
++            socket.connect(mSucreSnortAddress);
++        } catch (IOException e) {
++            Log.e(TAG, "Cannot connect to sucre-snort-control socket");
++        }
++        if (socket.isConnected()) {
++            try {
++                socket.getOutputStream().write(command.getBytes());
++            } catch (IOException e) {
++                Log.e(TAG, "Cannot write to sucre-snort-control socket");
++            }
++        }
++        try {
++            socket.close();
++        } catch (IOException e) {
++        }
++    }
++
++    public void sucreSnortSendTopActivity(int uid) {
++        sucreSnortSendCommand("TOPACTIVITY " + uid);
++    }
+ }
+-- 
+2.53.0
+

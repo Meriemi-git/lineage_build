@@ -1,0 +1,467 @@
+From 15d5e729ca927d005274534274e1c499933cd800 Mon Sep 17 00:00:00 2001
+From: Doremus <meriemi@protonmail.com>
+Date: Thu, 26 Feb 2026 09:52:05 +0100
+Subject: [PATCH] sucre-snort additions
+
+Change-Id: I35945e494ee69e5b8ff25ccb85e05947b65533b7
+---
+ contexts/file_contexts_test_data              | 12 ++++
+ .../private/compat/34.0/34.0.ignore.cil       |  7 +++
+ prebuilts/api/202404/public/file.te           |  6 ++
+ prebuilts/api/202404/public/property.te       |  1 +
+ prebuilts/api/202404/public/sucre-snort.te    | 57 +++++++++++++++++++
+ prebuilts/api/202504/public/file.te           |  6 ++
+ prebuilts/api/202504/public/property.te       |  1 +
+ prebuilts/api/202504/public/sucre-snort.te    | 57 +++++++++++++++++++
+ private/bpfdomain.te                          |  2 +-
+ private/bpfloader.te                          |  7 ++-
+ private/compat/34.0/34.0.ignore.cil           |  7 +++
+ private/domain.te                             |  1 +
+ private/file_contexts                         |  6 ++
+ private/network_stack.te                      |  4 +-
+ private/property_contexts                     |  3 +
+ private/sucre-snort.te                        |  7 +++
+ public/file.te                                |  6 ++
+ public/property.te                            |  1 +
+ public/sucre-snort.te                         | 57 +++++++++++++++++++
+ 19 files changed, 242 insertions(+), 6 deletions(-)
+ create mode 100644 prebuilts/api/202404/public/sucre-snort.te
+ create mode 100644 prebuilts/api/202504/public/sucre-snort.te
+ create mode 100644 private/sucre-snort.te
+ create mode 100644 public/sucre-snort.te
+
+diff --git a/contexts/file_contexts_test_data b/contexts/file_contexts_test_data
+index 59745708d..baf10ef58 100644
+--- a/contexts/file_contexts_test_data
++++ b/contexts/file_contexts_test_data
+@@ -1365,3 +1365,15 @@
+ /mnt/pre_reboot_dexopt                                            pre_reboot_dexopt_file
+ 
+ /second_stage_resources/overlay_remounter                         overlay_remounter_exec
++
++# sucre-snort (tests checkfc)
++
++/system_ext/bin/sucre-snort                     sucresnort_exec
++/system/system_ext/bin/sucre-snort              sucresnort_exec
++/data/snort                                     snort_data_file
++/data/snort/rules/snort.rules                   snort_data_file
++/system_ext/etc/sucre-snort                     sucresnort_etc_file
++/system_ext/etc/sucre-snort/config.yaml         sucresnort_etc_file
++/system/system_ext/etc/sucre-snort/config.yaml  sucresnort_etc_file
++/dev/socket/sucre-snort-control                 sucresnortcontrol_socket
++/dev/socket/sucre-snort-netd                    sucresnortnetd_socket
+\ No newline at end of file
+diff --git a/prebuilts/api/202404/private/compat/34.0/34.0.ignore.cil b/prebuilts/api/202404/private/compat/34.0/34.0.ignore.cil
+index 5f835a4cb..b070d808f 100644
+--- a/prebuilts/api/202404/private/compat/34.0/34.0.ignore.cil
++++ b/prebuilts/api/202404/private/compat/34.0/34.0.ignore.cil
+@@ -49,4 +49,11 @@
+     aconfigd
+     aconfigd_exec
+     aconfigd_socket
++    sucresnort
++    snort_data_file
++    sucresnort_etc_file
++    sucresnort_exec
++    sucresnortcontrol_socket
++    sucresnortnetd_socket
++    sucresnort_prop
+   ))
+diff --git a/prebuilts/api/202404/public/file.te b/prebuilts/api/202404/public/file.te
+index 209fdb150..b7dc9d049 100644
+--- a/prebuilts/api/202404/public/file.te
++++ b/prebuilts/api/202404/public/file.te
+@@ -649,3 +649,9 @@ type audiohal_data_file, file_type, data_file_type, core_data_file_type;
+ # Should be:
+ #   type apk_data_file, file_type, data_file_type;
+ neverallow fs_type file_type:filesystem associate;
++
++# /data/snort/* /system/etc/sucresnort/* for sucre-snort daemon
++type snort_data_file, file_type, data_file_type, core_data_file_type;
++type sucresnort_etc_file, system_file_type, file_type;
++type sucresnortcontrol_socket, file_type, coredomain_socket, mlstrustedobject;
++type sucresnortnetd_socket, file_type, coredomain_socket, mlstrustedobject;
+diff --git a/prebuilts/api/202404/public/property.te b/prebuilts/api/202404/public/property.te
+index 453a467b7..1b4ae8f98 100644
+--- a/prebuilts/api/202404/public/property.te
++++ b/prebuilts/api/202404/public/property.te
+@@ -81,6 +81,7 @@ system_restricted_prop(gwp_asan_prop)
+ system_restricted_prop(hal_instrumentation_prop)
+ system_restricted_prop(userdebug_or_eng_prop)
+ system_restricted_prop(init_service_status_prop)
++system_restricted_prop(sucresnort_prop)
+ system_restricted_prop(libc_debug_prop)
+ system_restricted_prop(module_sdkextensions_prop)
+ system_restricted_prop(nnapi_ext_deny_product_prop)
+diff --git a/prebuilts/api/202404/public/sucre-snort.te b/prebuilts/api/202404/public/sucre-snort.te
+new file mode 100644
+index 000000000..2b884dc96
+--- /dev/null
++++ b/prebuilts/api/202404/public/sucre-snort.te
+@@ -0,0 +1,57 @@
++type sucresnort, domain, mlstrustedsubject;
++type sucresnort_exec, exec_type, file_type, system_file_type;
++
++net_domain(sucresnort)
++
++# iptables
++
++allow sucresnort system_file:file { lock execute_no_trans };
++allow sucresnort shell_exec:file rx_file_perms;
++allow sucresnort self:global_capability_class_set {
++    net_raw
++    net_admin
++};
++dontaudit sucresnort system_file:dir write;
++
++# package list
++
++allow sucresnort packages_list_file:file r_file_perms;
++
++# sockets
++
++allow sucresnort self:netlink_netfilter_socket create_socket_perms_no_ioctl;
++allow sucresnort proc_net:file r_file_perms;
++unix_socket_connect(platform_app, sucresnortcontrol, sucresnort);
++unix_socket_connect(system_server, sucresnortcontrol, sucresnort);
++unix_socket_connect(netd, sucresnortnetd, sucresnort);
++
++# default config
++
++r_dir_file(sucresnort, sucresnort_etc_file)
++
++# saved data
++
++allow sucresnort snort_data_file:dir create_dir_perms;
++allow sucresnort snort_data_file:file create_file_perms;
++
++# system properties
++
++get_prop(sucresnort, boot_status_prop);
++set_prop(sucresnort, sucresnort_prop);
++set_prop(init, sucresnort_prop);
++
++# network interfaces
++
++r_dir_file(sucresnort, sysfs_net)
++
++# default apps management
++
++allow sucresnort package_service:service_manager find;
++binder_call(sucresnort, servicemanager)
++binder_call(sucresnort, system_server)
++binder_call(system_server, sucresnort)
++selinux_check_access(sucresnort)
++allow sucresnort toolbox_exec:file rx_file_perms;
++allow sucresnort tmpfs:dir create_dir_perms;
++allow sucresnort system_file:dir mounton;
++allow sucresnort self:capability sys_admin;
+diff --git a/prebuilts/api/202504/public/file.te b/prebuilts/api/202504/public/file.te
+index 7a8e3af71..4a0633736 100644
+--- a/prebuilts/api/202504/public/file.te
++++ b/prebuilts/api/202504/public/file.te
+@@ -665,3 +665,9 @@ starting_at_board_api(202504, `
+ # system/sepolicy/public is for vendor-facing type and attribute definitions.
+ # DO NOT ADD allow, neverallow, or dontaudit statements here.
+ # Instead, add such policy rules to system/sepolicy/private/*.te.
++
++# /data/snort/* /system/etc/sucresnort/* for sucre-snort daemon
++type snort_data_file, file_type, data_file_type, core_data_file_type;
++type sucresnort_etc_file, system_file_type, file_type;
++type sucresnortcontrol_socket, file_type, coredomain_socket, mlstrustedobject;
++type sucresnortnetd_socket, file_type, coredomain_socket, mlstrustedobject;
+\ No newline at end of file
+diff --git a/prebuilts/api/202504/public/property.te b/prebuilts/api/202504/public/property.te
+index c6c56a903..a98f0d3e1 100644
+--- a/prebuilts/api/202504/public/property.te
++++ b/prebuilts/api/202504/public/property.te
+@@ -81,6 +81,7 @@ system_restricted_prop(gwp_asan_prop)
+ system_restricted_prop(hal_instrumentation_prop)
+ system_restricted_prop(userdebug_or_eng_prop)
+ system_restricted_prop(init_service_status_prop)
++system_restricted_prop(sucresnort_prop)
+ system_restricted_prop(libc_debug_prop)
+ system_restricted_prop(module_sdkextensions_prop)
+ system_restricted_prop(nnapi_ext_deny_product_prop)
+diff --git a/prebuilts/api/202504/public/sucre-snort.te b/prebuilts/api/202504/public/sucre-snort.te
+new file mode 100644
+index 000000000..2b884dc96
+--- /dev/null
++++ b/prebuilts/api/202504/public/sucre-snort.te
+@@ -0,0 +1,57 @@
++type sucresnort, domain, mlstrustedsubject;
++type sucresnort_exec, exec_type, file_type, system_file_type;
++
++net_domain(sucresnort)
++
++# iptables
++
++allow sucresnort system_file:file { lock execute_no_trans };
++allow sucresnort shell_exec:file rx_file_perms;
++allow sucresnort self:global_capability_class_set {
++    net_raw
++    net_admin
++};
++dontaudit sucresnort system_file:dir write;
++
++# package list
++
++allow sucresnort packages_list_file:file r_file_perms;
++
++# sockets
++
++allow sucresnort self:netlink_netfilter_socket create_socket_perms_no_ioctl;
++allow sucresnort proc_net:file r_file_perms;
++unix_socket_connect(platform_app, sucresnortcontrol, sucresnort);
++unix_socket_connect(system_server, sucresnortcontrol, sucresnort);
++unix_socket_connect(netd, sucresnortnetd, sucresnort);
++
++# default config
++
++r_dir_file(sucresnort, sucresnort_etc_file)
++
++# saved data
++
++allow sucresnort snort_data_file:dir create_dir_perms;
++allow sucresnort snort_data_file:file create_file_perms;
++
++# system properties
++
++get_prop(sucresnort, boot_status_prop);
++set_prop(sucresnort, sucresnort_prop);
++set_prop(init, sucresnort_prop);
++
++# network interfaces
++
++r_dir_file(sucresnort, sysfs_net)
++
++# default apps management
++
++allow sucresnort package_service:service_manager find;
++binder_call(sucresnort, servicemanager)
++binder_call(sucresnort, system_server)
++binder_call(system_server, sucresnort)
++selinux_check_access(sucresnort)
++allow sucresnort toolbox_exec:file rx_file_perms;
++allow sucresnort tmpfs:dir create_dir_perms;
++allow sucresnort system_file:dir mounton;
++allow sucresnort self:capability sys_admin;
+diff --git a/private/bpfdomain.te b/private/bpfdomain.te
+index 7c8f5c075..f431dccc3 100644
+--- a/private/bpfdomain.te
++++ b/private/bpfdomain.te
+@@ -9,7 +9,7 @@ neverallow {
+ } self:global_capability_class_set { net_admin net_raw };
+ 
+ # any domain which uses bpf is a bpfdomain
+-neverallow { domain -bpfdomain } *:bpf *;
++neverallow { domain -bpfdomain -sucresnort } *:bpf *;
+ 
+ allow bpfdomain fs_bpf:dir search;
+ 
+diff --git a/private/bpfloader.te b/private/bpfloader.te
+index 968fb03cf..3f747b35e 100644
+--- a/private/bpfloader.te
++++ b/private/bpfloader.te
+@@ -49,13 +49,13 @@ neverallow { domain -bpfloader } bpffs_type:dir { add_name create open read remo
+ 
+ neverallow { domain            } bpffs_type:file ~{ create getattr map open read rename setattr write };
+ neverallow { domain -bpfloader } bpffs_type:file { create map open rename setattr };
+-neverallow { domain -bpfloader -gpuservice -lmkd -mediaprovider_app -netd -netutils_wrapper                -system_server                             } fs_bpf:file                { getattr read };
++neverallow { domain -bpfloader -gpuservice -lmkd -mediaprovider_app -netd -netutils_wrapper                -sucresnort -system_server                 } fs_bpf:file                { getattr read };
+ neverallow { domain -bpfloader                                                                             -system_server -traced_probes              } fs_bpf_cputimeinstate:file { getattr read write };
+ neverallow { domain -bpfloader                                                                                                                        } fs_bpf_loader:file         { getattr read };
+ neverallow { domain -bpfloader                                                              -network_stack                                            } fs_bpf_net_private:file    { getattr read };
+ neverallow { domain -bpfloader                                                              -network_stack -system_server                             } fs_bpf_net_shared:file     { getattr read };
+ neverallow { domain -bpfloader                                      -netd                   -network_stack -system_server                             } fs_bpf_netd_readonly:file  { getattr read };
+-neverallow { domain -bpfloader                                      -netd -netutils_wrapper -network_stack -system_server                             } fs_bpf_netd_shared:file    { getattr read };
++neverallow { domain -bpfloader                                      -netd -netutils_wrapper -network_stack -sucresnort -system_server                 } fs_bpf_netd_shared:file    { getattr read };
+ neverallow { domain -bpfloader                                                              -network_stack                                            } fs_bpf_tethering:file      { getattr read };
+ neverallow { domain -bpfloader                                                                                                           -uprobestats } fs_bpf_uprobestats:file   { getattr read };
+ neverallow { domain -bpfloader -gpuservice -lmkd                    -netd -netutils_wrapper -network_stack -system_server -traced_probes -uprobestats } { bpffs_type -fs_bpf_vendor }:file write;
+@@ -64,7 +64,8 @@ neverallow { domain -bpfloader } bpffs_type:lnk_file ~read;
+ neverallow { domain -bpfdomain } bpffs_type:lnk_file read;
+ 
+ neverallow { domain -bpfloader } *:bpf prog_load;
+-neverallow { domain -bpfdomain } *:bpf { map_create map_read map_write prog_run };
++neverallow { domain -bpfdomain } *:bpf { map_create map_read map_write };
++neverallow { domain -bpfdomain -sucresnort } *:bpf { prog_run };
+ 
+ # 'fs_bpf_loader' is for internal use of the BpfLoader oneshot boot time process.
+ neverallow { domain -bpfloader } fs_bpf_loader:bpf *;
+diff --git a/private/compat/34.0/34.0.ignore.cil b/private/compat/34.0/34.0.ignore.cil
+index 46210f691..2a2072496 100644
+--- a/private/compat/34.0/34.0.ignore.cil
++++ b/private/compat/34.0/34.0.ignore.cil
+@@ -53,4 +53,11 @@
+     enable_16k_pages_prop
+     proc_cgroups
+     media_quality_service
++    sucresnort
++    snort_data_file
++    sucresnort_etc_file
++    sucresnort_exec
++    sucresnortcontrol_socket
++    sucresnortnetd_socket
++    sucresnort_prop
+   ))
+diff --git a/private/domain.te b/private/domain.te
+index bdc185c73..93d72556f 100644
+--- a/private/domain.te
++++ b/private/domain.te
+@@ -2228,6 +2228,7 @@ neverallow {
+   domain
+   -dexopt_chroot_setup
+   -init
++  -sucresnort
+   userdebug_or_eng(`-overlay_remounter')
+   userdebug_or_eng(`-zygote')
+ } {
+diff --git a/private/file_contexts b/private/file_contexts
+index bc79eebf7..15172819f 100644
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -970,3 +970,9 @@
+ #############################
+ # For overlays
+ /second_stage_resources/overlay_remounter u:object_r:overlay_remounter_exec:s0
++# sucresnort additions
++/(system_ext|system/system_ext)/bin/sucre-snort   u:object_r:sucresnort_exec:s0
++/data/snort(/.*)?          u:object_r:snort_data_file:s0
++/(system_ext|system/system_ext)/etc/sucre-snort(/.*)?     u:object_r:sucresnort_etc_file:s0
++/dev/socket/sucre-snort-control	u:object_r:sucresnortcontrol_socket:s0
++/dev/socket/sucre-snort-netd	u:object_r:sucresnortnetd_socket:s0
+diff --git a/private/network_stack.te b/private/network_stack.te
+index 414651982..04b8eb8f8 100644
+--- a/private/network_stack.te
++++ b/private/network_stack.te
+@@ -122,8 +122,8 @@ neverallow netd fs_bpf_netd_readonly:file write;
+ 
+ # T+: Only the bpfloader, netd, netutils_wrapper, network_stack and system_server should ever touch 'fs_bpf_netd_shared' programs/maps.
+ # netutils_wrapper requires access to be able to run iptables and only needs readonly access
+-neverallow { domain -bpfloader -netd -netutils_wrapper -network_stack -system_server } fs_bpf_netd_shared:dir ~getattr;
+-neverallow { domain -bpfloader -netd -netutils_wrapper -network_stack -system_server } fs_bpf_netd_shared:file *;
++neverallow { domain -bpfloader -init -sucresnort -netd -netutils_wrapper -network_stack -system_server -vendor_init } fs_bpf_netd_shared:dir ~getattr;
++neverallow { domain -bpfloader -init -sucresnort -netd -netutils_wrapper -network_stack -system_server -vendor_init } fs_bpf_netd_shared:file *;
+ neverallow netutils_wrapper fs_bpf_netd_shared:file write;
+ 
+ # S+: Only the bpfloader and the network_stack should ever touch 'fs_bpf_tethering' programs/maps.
+diff --git a/private/property_contexts b/private/property_contexts
+index b325c2ff0..154b7a123 100644
+--- a/private/property_contexts
++++ b/private/property_contexts
+@@ -1885,6 +1885,9 @@ mmd.zram.enabled u:object_r:mmd_shared_prop:s0 exact bool
+ mmd.enabled_aconfig u:object_r:mmd_shared_status_prop:s0 exact bool
+ mmd.status. u:object_r:mmd_status_prop:s0
+ 
++#Properties for sucre-snort
++sucre-snort.first_start u:object_r:sucresnort_prop:s0 exact bool
++
+ # Properties for USB data protection features
+ ro.usb.data_protection.disable_when_locked.supported u:object_r:usb_disable_when_locked_prop:s0 exact bool
+ ro.usb.data_protection.disable_when_locked.replug_required_upon_enable u:object_r:usb_disable_when_locked_prop:s0 exact bool
+diff --git a/private/sucre-snort.te b/private/sucre-snort.te
+new file mode 100644
+index 000000000..96401df14
+--- /dev/null
++++ b/private/sucre-snort.te
+@@ -0,0 +1,7 @@
++typeattribute sucresnort coredomain;
++
++init_daemon_domain(sucresnort)
++
++allow sucresnort { fs_bpf fs_bpf_netd_shared}:dir search;
++allow sucresnort { fs_bpf fs_bpf_netd_shared}:file read;
++allow sucresnort bpfloader:bpf prog_run;
+diff --git a/public/file.te b/public/file.te
+index ed4d82248..bc67caded 100644
+--- a/public/file.te
++++ b/public/file.te
+@@ -656,3 +656,9 @@ starting_at_board_api(202604, `type sysfs_usb_pd, fs_type, sysfs_type;')
+ # system/sepolicy/public is for vendor-facing type and attribute definitions.
+ # DO NOT ADD allow, neverallow, or dontaudit statements here.
+ # Instead, add such policy rules to system/sepolicy/private/*.te.
++
++# /data/snort/* /system/etc/sucresnort/* for sucre-snort daemon
++type snort_data_file, file_type, data_file_type, core_data_file_type;
++type sucresnort_etc_file, system_file_type, file_type;
++type sucresnortcontrol_socket, file_type, coredomain_socket, mlstrustedobject;
++type sucresnortnetd_socket, file_type, coredomain_socket, mlstrustedobject;
+diff --git a/public/property.te b/public/property.te
+index 0bf2bd7ea..d065ac0ec 100644
+--- a/public/property.te
++++ b/public/property.te
+@@ -94,6 +94,7 @@ system_restricted_prop(restorecon_prop)
+ system_restricted_prop(retaildemo_prop)
+ system_restricted_prop(servicemanager_prop)
+ system_restricted_prop(smart_idle_maint_enabled_prop)
++system_restricted_prop(sucresnort_prop)
+ system_restricted_prop(socket_hook_prop)
+ system_restricted_prop(sqlite_log_prop)
+ system_restricted_prop(surfaceflinger_display_prop)
+diff --git a/public/sucre-snort.te b/public/sucre-snort.te
+new file mode 100644
+index 000000000..2b884dc96
+--- /dev/null
++++ b/public/sucre-snort.te
+@@ -0,0 +1,57 @@
++type sucresnort, domain, mlstrustedsubject;
++type sucresnort_exec, exec_type, file_type, system_file_type;
++
++net_domain(sucresnort)
++
++# iptables
++
++allow sucresnort system_file:file { lock execute_no_trans };
++allow sucresnort shell_exec:file rx_file_perms;
++allow sucresnort self:global_capability_class_set {
++    net_raw
++    net_admin
++};
++dontaudit sucresnort system_file:dir write;
++
++# package list
++
++allow sucresnort packages_list_file:file r_file_perms;
++
++# sockets
++
++allow sucresnort self:netlink_netfilter_socket create_socket_perms_no_ioctl;
++allow sucresnort proc_net:file r_file_perms;
++unix_socket_connect(platform_app, sucresnortcontrol, sucresnort);
++unix_socket_connect(system_server, sucresnortcontrol, sucresnort);
++unix_socket_connect(netd, sucresnortnetd, sucresnort);
++
++# default config
++
++r_dir_file(sucresnort, sucresnort_etc_file)
++
++# saved data
++
++allow sucresnort snort_data_file:dir create_dir_perms;
++allow sucresnort snort_data_file:file create_file_perms;
++
++# system properties
++
++get_prop(sucresnort, boot_status_prop);
++set_prop(sucresnort, sucresnort_prop);
++set_prop(init, sucresnort_prop);
++
++# network interfaces
++
++r_dir_file(sucresnort, sysfs_net)
++
++# default apps management
++
++allow sucresnort package_service:service_manager find;
++binder_call(sucresnort, servicemanager)
++binder_call(sucresnort, system_server)
++binder_call(system_server, sucresnort)
++selinux_check_access(sucresnort)
++allow sucresnort toolbox_exec:file rx_file_perms;
++allow sucresnort tmpfs:dir create_dir_perms;
++allow sucresnort system_file:dir mounton;
++allow sucresnort self:capability sys_admin;
+-- 
+2.53.0
+

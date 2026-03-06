@@ -1,0 +1,121 @@
+name: Build jars sucre
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 33
+            branch: lineage-20.0
+          - api: 34
+            branch: lineage-21.0
+          - api: 35
+            branch: lineage-22.2
+          - api: 36
+            branch: lineage-23.2
+
+    env:
+      WORKDIR: ${{ github.workspace }}/android
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: "1"
+
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            adb autoconf automake bc bison build-essential ccache curl \
+            expat fastboot flex g++ g++-multilib gawk gcc gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
+            libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev \
+            libxml2 libxml2-utils lzop openjdk-17-jdk pngcrush repo \
+            rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-sucre-${{ matrix.api }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-sucre-${{ matrix.api }}-
+
+      - name: Prepare ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache -M 15G || true
+
+      - name: repo init
+        run: |
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
+          repo init -u https://github.com/LineageOS/android.git -b "${{ matrix.branch }}" --git-lfs
+
+      - name: repo sync
+        run: |
+          cd "$WORKDIR"
+          repo sync -c --no-tags --no-clone-bundle -j4
+
+      - name: Save source snapshot before patches
+        run: |
+          cd "$WORKDIR"
+          repo manifest -r -o pinned-manifest.xml
+          repo forall -c 'echo "$REPO_PROJECT $(git rev-parse HEAD)"' | sort > base-revisions.txt
+          sha256sum base-revisions.txt > base-revisions.txt.sha256
+
+      - name: Copy scripts and patches
+        run: |
+          rsync -a scripts/ "$WORKDIR/scripts/"
+          rsync -a patches/ "$WORKDIR/patches/"
+
+      - name: Apply sucre patches
+        run: |
+          cd "$WORKDIR"
+          bash scripts/apply-patches.sh "${{ matrix.api }}"
+
+      - name: Save patched revisions
+        run: |
+          cd "$WORKDIR"
+          repo forall -c 'echo "$REPO_PROJECT $(git rev-parse HEAD)"' | sort > patched-revisions.txt || true
+          sha256sum patched-revisions.txt > patched-revisions.txt.sha256 || true
+
+      - name: Build jars
+        run: |
+          cd "$WORKDIR"
+          bash scripts/build-jars.sh "${{ matrix.api }}" "sucre"
+
+      - name: Upload jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars-api${{ matrix.api }}-sucre
+          path: |
+            ${{ github.workspace }}/android/artifacts/api${{ matrix.api }}/sucre/*
+            ${{ github.workspace }}/android/pinned-manifest.xml
+            ${{ github.workspace }}/android/base-revisions.txt
+            ${{ github.workspace }}/android/base-revisions.txt.sha256
+            ${{ github.workspace }}/android/patched-revisions.txt
+            ${{ github.workspace }}/android/patched-revisions.txt.sha256
+          if-no-files-found: error

@@ -1,0 +1,4 @@
+android/
+.ccache/
+artifacts/
+*.log
