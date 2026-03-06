@@ -2,33 +2,31 @@
 set -euo pipefail
 
 API="${1:?missing api}"
-PATCH_DIR="patches/api${API}"
+PATCH_FILE="patches/api${API}/android_frameworks_base.patch"
+REPO_PATH="frameworks/base"
 
-apply_one() {
-  local repo_path="$1"
-  local patch_name="$2"
-  local patch_file="${PATCH_DIR}/${patch_name}"
+echo "[*] Applying sucre patch for API ${API}"
 
-  if [ ! -f "$patch_file" ]; then
-    echo "[skip] missing patch: $patch_file"
-    return 0
-  fi
+if [ ! -d "${REPO_PATH}/.git" ]; then
+  echo "[error] repo not found: ${REPO_PATH}"
+  exit 1
+fi
 
-  if [ ! -d "${repo_path}/.git" ]; then
-    echo "[error] repo not found: ${repo_path}"
-    exit 1
-  fi
+if [ ! -f "${PATCH_FILE}" ]; then
+  echo "[error] patch not found: ${PATCH_FILE}"
+  exit 1
+fi
 
-  echo "[*] Applying ${patch_name} -> ${repo_path}"
-  cp "$patch_file" "${repo_path}/"
-  (
-    cd "${repo_path}"
-    git apply "${patch_name}" --ignore-whitespace --reject
-  )
-}
+if git -C "${REPO_PATH}" apply --check --ignore-whitespace "${PATCH_FILE}" 2>/dev/null; then
+  git -C "${REPO_PATH}" apply --ignore-whitespace --reject "${PATCH_FILE}"
+  echo "[OK] patch applied"
+  exit 0
+fi
 
-apply_one "frameworks/base" "android_frameworks_base.patch"
-apply_one "system/sepolicy" "android_system_sepolicy.patch"
-apply_one "packages/modules/DnsResolver" "android_packages_modules_dnsresolver.patch"
+if git -C "${REPO_PATH}" apply --check --ignore-whitespace --reverse "${PATCH_FILE}" 2>/dev/null; then
+  echo "[*] patch already applied"
+  exit 0
+fi
 
-echo "[OK] patches applied for api${API}"
+echo "[error] patch cannot be applied"
+exit 1
