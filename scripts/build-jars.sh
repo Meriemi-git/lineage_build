@@ -4,12 +4,10 @@ set -eo pipefail
 API="${1:?missing api}"
 VARIANT="${2:?missing variant}"
 
-# envsetup.sh ne supporte pas bien "set -u"
-set +u
 source build/envsetup.sh
-set -u
 
-TARGET="$(bash scripts/select-lineage-avd-lunch.sh)"
+REL="$(find vendor/lineage/release/aconfig -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n1)"
+TARGET="lineage_arm64-${REL}-userdebug"
 
 echo "[*] lunch target: $TARGET"
 
