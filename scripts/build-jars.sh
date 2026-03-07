@@ -7,11 +7,26 @@ VARIANT="${2:?missing variant}"
 source build/envsetup.sh
 
 REL="$(find vendor/lineage/release/aconfig -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n1)"
-TARGET="lineage_arm64-${REL}-userdebug"
 
-echo "[*] lunch target: $TARGET"
+try_lunch() {
+  local target="$1"
+  echo "[*] trying lunch target: $target"
+  if lunch "$target"; then
+    echo "$target" > .chosen_lunch_target
+    return 0
+  fi
+  return 1
+}
 
-lunch "$TARGET"
+try_lunch "lineage_sdk_phone64_x86_64-${REL}-userdebug" || \
+try_lunch "lineage_sdk_phone_x86_64-${REL}-userdebug" || \
+try_lunch "lineage_arm64-${REL}-userdebug" || {
+  echo "[error] no working lunch target found"
+  exit 1
+}
+
+TARGET="$(cat .chosen_lunch_target)"
+echo "[*] selected lunch target: $TARGET"
 
 m -j2 framework services
 
