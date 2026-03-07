@@ -8,25 +8,28 @@ source build/envsetup.sh
 
 REL="$(find vendor/lineage/release/aconfig -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n1)"
 
-try_lunch() {
-  local target="$1"
-  echo "[*] trying lunch target: $target"
-  if lunch "$target"; then
-    echo "$target" > .chosen_lunch_target
-    return 0
-  fi
-  return 1
-}
+echo "[*] release config: $REL"
 
-try_lunch "lineage_sdk_phone64_x86_64-${REL}-userdebug" || \
-try_lunch "lineage_sdk_phone_x86_64-${REL}-userdebug" || \
-try_lunch "lineage_arm64-${REL}-userdebug" || {
-  echo "[error] no working lunch target found"
+# Liste les produits réellement disponibles dans ce checkout
+# On cible uniquement les produits Lineage avec la bonne release config
+mapfile -t CANDIDATES < <(
+  build/soong/soong_ui.bash --dumpvars-mode --vars="all_named_products" 2>/dev/null \
+    | tr ' ' '\n' \
+    | grep "^lineage_.*-${REL}-userdebug$" \
+    | sort -u
+)
+
+if [ "${#CANDIDATES[@]}" -eq 0 ]; then
+  echo "[error] no Lineage lunch target found for release ${REL}"
+  echo "[*] available products:"
+  build/soong/soong_ui.bash --dumpvars-mode --vars="all_named_products" 2>/dev/null || true
   exit 1
-}
+fi
 
-TARGET="$(cat .chosen_lunch_target)"
+TARGET="${CANDIDATES[0]}"
 echo "[*] selected lunch target: $TARGET"
+
+lunch "$TARGET"
 
 m -j2 framework services
 
